@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: nastasia.azurecr.io
+        username: ${{ secrets.acr_nastasia_username }}
+        password: ${{ secrets.acr_nastasia_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t nastasia.azurecr.io/nas:${{ github.sha }}
+        docker push nastasia.azurecr.io/nas:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_nas_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep nasb9a5 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace nasb9a5`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: nasb9a5
+        container-registry-url: nastasia.azurecr.io
+        container-registry-username: ${{ secrets.acr_nastasia_username }}
+        container-registry-password: ${{ secrets.acr_nastasia_password }}
+        secret-name: nasdockerauth
+       
+    - uses: azure/k8s-deploy@v1
+      with:
+        namespace: nasb9a5
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          nastasia.azurecr.io/nas:${{ github.sha }}
+        imagepullsecrets: |
+          nasdockerauth
